@@ -16,6 +16,8 @@ Date: 2026-10-20. Scope: the supplied v0.1.0 archive, reviewed and corrected for
 | `--profile` and `--config` could be supplied together with one silently ignored | Make them mutually exclusive | All three profile-based CLI commands |
 | Packaging and Debian parser checks were absent from CI | Build source/wheel distributions, install outside the checkout, and run a separate Debian integration job | Three Python versions and Debian 13 container |
 
+The first hosted run exposed deprecated Node.js 20 actions. CI now uses the documented v7 releases of [checkout](https://github.com/actions/checkout) and [setup-python](https://github.com/actions/setup-python), and pins the runner to Ubuntu 24.04 to avoid the announced `ubuntu-latest` migration during validation.
+
 ## Executed checks
 
 - All 32 unit tests passed on Python 3.11, 3.13, and 3.14, using isolated temporary files and mocked audit commands.
