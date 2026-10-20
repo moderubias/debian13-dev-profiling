@@ -153,4 +153,4 @@ Repository preparation, code review, bug fixes, documentation updates, and QA we
 
 ## License
 
-No open-source license has been selected yet. Decide licensing terms before publishing the repository as an open-source project.
+This project uses the **Kiyoshima Open** profile with **Apache-2.0** as its controlling license. Kiyoshima Open adds machine-readable licensing metadata and does not modify the standard license terms. See [LICENSE](LICENSE) and [KIYOSHIMA.json](KIYOSHIMA.json). The files were generated and verified using the local `klicense` utility.

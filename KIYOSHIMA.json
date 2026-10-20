@@ -1,0 +1,73 @@
+{
+  "$schema": "https://raw.githubusercontent.com/moderubias/kiyoshima-licensing/main/machine/schema/kiyoshima-passport.schema.json",
+  "format": "Kiyoshima License Passport",
+  "schema_version": "1.3",
+  "declaration_scope": "covered-software",
+  "project": {
+    "name": "debian13-dev-profiling",
+    "kind": "application",
+    "repository": "https://github.com/moderubias/debian13-dev-profiling",
+    "copyright_holder": "Akayo Kiyoshima",
+    "contact": "https://github.com/moderubias/debian13-dev-profiling/issues"
+  },
+  "profile": "open",
+  "license": {
+    "kind": "spdx-expression",
+    "name": "Apache License 2.0",
+    "spdx_expression": "Apache-2.0",
+    "status": "standard",
+    "authoritative_file": "LICENSE",
+    "legal_priority": "license-text-controls",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "supporting_files": []
+  },
+  "permissions": {
+    "individual_personal_use": "allowed",
+    "individual_freelance_tool_use": "allowed",
+    "qualifying_education": "allowed",
+    "qualifying_research": "allowed",
+    "organization_evaluation": "allowed",
+    "noncommercial_modified_distribution": "allowed-with-conditions",
+    "organization_production_use": "allowed",
+    "commercial_distribution": "allowed-with-conditions",
+    "hosted_commercial_use": "allowed"
+  },
+  "ai": {
+    "agentic_operational_use": "no-additional-kiyoshima-restriction",
+    "coding_assistant_use": "no-additional-kiyoshima-restriction",
+    "temporary_rag": "no-additional-kiyoshima-restriction",
+    "model_training": "no-additional-kiyoshima-restriction",
+    "fine_tuning": "no-additional-kiyoshima-restriction",
+    "continued_pretraining": "no-additional-kiyoshima-restriction",
+    "dataset_creation": "no-additional-kiyoshima-restriction",
+    "synthetic_training_data": "no-additional-kiyoshima-restriction",
+    "model_improvement": "no-additional-kiyoshima-restriction"
+  },
+  "rights_reservations": {},
+  "permission_requests": {
+    "general": "https://github.com/moderubias/debian13-dev-profiling/issues"
+  },
+  "provenance": {
+    "digest_algorithm": "sha256",
+    "legal_text_digest": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  "automation": {
+    "conflict_policy": "deny-on-conflict",
+    "missing_field_policy": "do-not-infer-rights",
+    "unknown_value_policy": "do-not-infer-rights",
+    "machine_metadata_authority": "informational",
+    "additional_permissions_require_authenticated_grant": true
+  },
+  "grants": [],
+  "protocol": {
+    "name": "Kiyoshima License Passport Protocol",
+    "version": "1.0",
+    "semantics": "fail-closed-informational",
+    "canonical_repository": "https://github.com/moderubias/kiyoshima-licensing"
+  },
+  "policy_constraints": {
+    "standard_license_conditions_apply": true,
+    "no_additional_kiyoshima_field_of_use_restrictions": true,
+    "open_profile_spdx_expression": "Apache-2.0"
+  }
+}
