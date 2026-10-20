@@ -48,3 +48,11 @@ jobs:
         run: docker build -t d13dp-qa -f tests/integration/Dockerfile .
       - name: Validate configuration in an isolated network namespace
         run: docker run --rm --network none --cap-add NET_ADMIN d13dp-qa
+
+  network-systemd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Exercise transactions with real nftables, systemd, SSH and IPv4/IPv6
+        run: tests/integration/run-systemd.sh

@@ -43,11 +43,33 @@ def _parser() -> argparse.ArgumentParser:
     manifest_source = manifest.add_mutually_exclusive_group()
     manifest_source.add_argument("--profile", choices=("minimal", "web", "docker"), default="minimal")
     manifest_source.add_argument("--config", type=Path, help="Custom TOML profile instead of --profile")
+    network = sub.add_parser("network", help="Experimental transactional host-input firewall management")
+    commands = network.add_subparsers(dest="network_command", required=True)
+    commands.add_parser("install", help="Explicitly install the owned boot/recovery unit; no policy is applied")
+    commands.add_parser("status", help="Inspect effective rules, journal and boot unit")
+    for operation in ("plan", "apply"):
+        command = commands.add_parser(operation)
+        source = command.add_mutually_exclusive_group()
+        source.add_argument("--profile", choices=("minimal", "web", "docker"), default="minimal")
+        source.add_argument("--config", type=Path, help="Custom network TOML: tcp, udp, ssh_ports arrays")
+        if operation == "apply":
+            command.add_argument("--dry-run", action="store_true")
+            command.add_argument("--expect-plan", default="", help="Digest from a fresh plan; required for changes")
+            command.add_argument("--confirm-timeout", type=int, default=120)
+            command.add_argument("--console", action="store_true", help="Explicitly attest local console access")
+    confirm = commands.add_parser("confirm")
+    confirm.add_argument("transaction")
+    confirm.add_argument("--console", action="store_true")
+    rollback = commands.add_parser("rollback")
+    rollback.add_argument("transaction", nargs="?")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "network":
+        from .network import dispatch
+        return dispatch(args)
     if args.command == "audit":
         report = collect()
         if args.json:

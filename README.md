@@ -2,9 +2,12 @@
 
 A Debian 13 (trixie) host security auditing, policy planning, and deterministic configuration generator. `d13dp` is the CLI name.
 
-**Status: v0.1.0, pre-production.** The executable is deliberately read-only with respect to the host. It can render candidate configuration files to a working directory; it does **not** install packages, change `/etc`, reload firewall rules, or restart SSH. There is no unattended `apply` command yet. Treat rendered files as review material, not a ready-to-run universal security deployment.
+**Status: v0.2.0a1, experimental and pre-production.** `audit`, `plan`, `render`, and `manifest` retain their read-only/candidate-generation behavior. The separate `network` command provides a narrowly scoped, explicitly installed host-input firewall transaction workflow with timed confirmation and rollback. It is **not a general production hardening executor**: it does not configure SSH, install application services, manage Docker DNAT, or apply the other rendered modules. Read the [network transaction guide](docs/network.md) before using it.
 
 ## What is implemented
+
+- Experimental `network install|plan|apply|confirm|rollback|status` with an owned nftables table, observed-state diffs, SSH preservation checks, durable transactions, a systemd rollback timer, and startup recovery.
+- `minimal`, `web`, host-input-only `docker`, and custom TCP/UDP network policies. Unsupported existing inbound chains are conflicts, not automatically adopted.
 
 - Read-only security audit (`audit`, `audit --json`, `audit --strict`).
 - Ordered implementation checklist (`plan`).
@@ -72,7 +75,9 @@ The installed wheel includes all three TOML profiles and works outside the sourc
 
 Exit `0` means the command completed; ordinary `audit` can return `0` with failing findings. Invalid profiles and render conflicts return `1`. Invalid command syntax returns `2`; `audit --strict` also returns `2` if any high-severity finding has a status other than `pass`. Medium- and low-severity findings do not change the strict exit code.
 
-## Profiles
+## Candidate-rendering profiles
+
+The `render` command uses the baseline profiles below. Transactional network profiles and their separate custom TOML format are described in [docs/network.md](docs/network.md).
 
 | Profile | Intended host | Inbound TCP in rendered *candidate* rules | Firewall output |
 | --- | --- | --- | --- |
@@ -100,7 +105,7 @@ Use a fresh output directory when changing which modules are enabled. Rendering 
 
 Choose an output directory writable only by you. Rendering does not defend against concurrent hostile directory replacement, and an I/O failure can leave a partially updated set of files; it is not a multi-file transaction. Repeatability and conflict handling are covered by automated tests.
 
-**Host-application idempotence is not yet implemented.** The planned `apply` state machine will use typed resources, discovery, change plans, precondition checks, durable backups, atomic file updates, service-level validation, staged restart/reload, connectivity confirmation, rollback, and post-apply drift checks. An identical second `apply` should yield zero actions. Enabling a module already configured by another tool will require either verified adoption or explicit conflict resolution, never duplicate insertion of firewall rules.
+**General host-application idempotence is not yet implemented.** The experimental `network apply` slice verifies effective nftables JSON and performs no writes when the same committed policy already matches. The planned general hardening executor still needs typed resources, module discovery, service-level validation, connectivity supervision, and post-apply drift checks. An identical second `apply` should yield zero actions. Enabling a module already configured by another tool will require either verified adoption or explicit conflict resolution, never duplicate insertion of firewall rules.
 
 See [`docs/architecture.md`](docs/architecture.md), [`docs/threat-model.md`](docs/threat-model.md), and [`docs/deployment-safety.md`](docs/deployment-safety.md).
 
@@ -113,7 +118,7 @@ See [`docs/architecture.md`](docs/architecture.md), [`docs/threat-model.md`](doc
 - Generated nftables policy uses its own table and does not delete Fail2ban tables, but adding another base chain cannot be assumed to permit ports blocked by an existing chain. Test and migrate deliberately.
 - SSH auditing uses `sshd -T` without connection-specific `-C` parameters; `Match` blocks for particular users or source addresses require separate review.
 - Automatic-update checks inspect installed packages and APT configuration, not timer execution, successful upgrades, or the security coverage of configured origins.
-- Currently targets Debian 13 only. Container integration exercises real Debian parsers and an isolated nftables network namespace. Full VM deployment, reboot, remote access, and packet reachability remain unverified. See the [QA report](docs/qa.md).
+- Currently targets Debian 13 only. Container integration exercises real Debian parsers and an isolated nftables network namespace. The network slice also has isolated systemd, SSH, IPv4/IPv6 packet, conntrack, timer, failure-injection, and container-restart tests. Full VM deployment and cold reboot remain unverified. See the [network QA report](docs/network-qa.md) and [initial archive QA report](docs/qa.md).
 
 ## Development and QA
 
@@ -123,13 +128,16 @@ python3 -m compileall -q src tests
 
 docker build -t d13dp-qa -f tests/integration/Dockerfile .
 docker run --rm --network none --cap-add NET_ADMIN d13dp-qa
+
+# Real systemd/nftables transaction checks in a disposable container:
+tests/integration/run-systemd.sh
 ```
 
-The Docker run command requires Docker and grants network administration only inside the disposable container's network namespace. It loads test rules there; use the command exactly as shown. CI runs unit and packaging checks on Python 3.11, 3.13, and 3.14, plus Debian 13 integration. See [docs/qa.md](docs/qa.md) for coverage and remaining limits.
+The Docker run command requires Docker and grants network administration only inside the disposable container's network namespace. It loads test rules there; use the command exactly as shown. CI runs unit and packaging checks on Python 3.11, 3.13, and 3.14, plus Debian 13 parser integration and a separate systemd transaction job. The systemd runner uses an isolated privileged container, private cgroups, and no host mounts. See [docs/network-qa.md](docs/network-qa.md) for coverage and remaining limits.
 
 ## Agent-assisted development
 
-Repository preparation, code review, bug fixes, documentation updates, and QA were performed with the **OpenAI Codex agent, powered by GPT-6**. The agent worked from the supplied v0.1.0 archive. This records development provenance; independent security review and production deployment validation remain outstanding.
+Repository preparation, code review, bug fixes, documentation updates, and QA were performed with the **OpenAI Codex agent, powered by GPT-6**. The agent prepared the initial repository from the supplied v0.1.0 archive and implemented the experimental network slice and its regression tests. See the separate [Kiyoro recovery report](docs/kiyoro-recovery.md) for the explicitly applied VPS repair. This records development provenance; independent security review and production deployment validation remain outstanding.
 
 ## Roadmap
 

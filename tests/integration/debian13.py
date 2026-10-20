@@ -18,6 +18,8 @@ def run(*args, **kwargs):
 
 
 def main():
+    if not Path("/.dockerenv").is_file() or set(os.listdir("/sys/class/net")) != {"lo"}:
+        raise SystemExit("Run only inside the documented disposable --network none QA container")
     suite = unittest.defaultTestLoader.discover("tests")
     if not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful():
         raise SystemExit(1)

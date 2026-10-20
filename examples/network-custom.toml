@@ -1,0 +1,5 @@
+# Only TCP/UDP destination ports; IPv4 and IPv6 share the same allowances.
+# Keep every effective/listening SSH port in BOTH tcp and ssh_ports.
+tcp = [22, 8443]
+udp = [51820]
+ssh_ports = [22]

@@ -11,6 +11,7 @@ d13dp audit [--json] [--strict]
 d13dp plan [--profile {minimal,web,docker} | --config FILE]
 d13dp render [--profile PROFILE | --config FILE] [--output DIR]
 d13dp manifest [--profile PROFILE | --config FILE]
+d13dp network install|plan|apply|confirm|rollback|status
 
 d13dp doctor
 d13dp diff
@@ -21,7 +22,7 @@ d13dp rollback --transaction ID
 d13dp configure ssh|ports|tls|docker|backups|alerts
 ```
 
-The first four commands exist in v0.1. The remainder are design targets and must not be presented as implemented.
+The first four commands existed in v0.1. The experimental network command was added in v0.2.0a1; its bounded host-input implementation is described in [network.md](network.md). The other commands remain design targets and must not be presented as implemented.
 
 ## System invariants
 

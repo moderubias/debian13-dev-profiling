@@ -1,6 +1,6 @@
 # Safe deployment protocol
 
-This release only generates candidate files. It has **no `apply` command**.
+The original hardening commands only generate candidate files and have no general `apply` command. Version 0.2.0a1 adds a separate experimental `network apply` for an owned host-input table. Its exact protocol, startup recovery, and limitations are documented in [network.md](network.md); it does not apply SSH, Fail2ban, APT, sysctl, or application configuration.
 
 Before implementing any automated apply workflow:
 
