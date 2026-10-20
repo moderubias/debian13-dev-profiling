@@ -29,7 +29,7 @@ The runner downloads only the pinned base image and verifies its embedded SHA-51
 | Dry-run and drift | Actual deltas; no writes during dry-run; stale digest refusal; structural/persistent drift conflicts; port-set drift and guarded reconciliation; `verify`/`status` exit codes |
 | Ownership | Foreign inbound hooks refused; no global reset; unrelated forwarding table preserved; unknown migration objects/source refused |
 | Fail2ban | First transaction fixture checks and then real daemon-created bans; dynamic ban during timeout survives; actual banned client loses SSH and unban restores it |
-| Migration | Recognized source and live JSON; explicit adoption; runtime FORWARD/OUTPUT handles preserved; original file permissions restored; ten applications; reverse profile transition; reintroduced INPUT and file drift refused |
+| Migration | Recognized source and live JSON; explicit adoption; runtime FORWARD/OUTPUT handles preserved; original CRLF bytes and file permissions restored; ten applications; reverse profile transition; reintroduced INPUT and file drift refused |
 | Error handling | Inject candidate/rollback netlink failures; retain pending on failed restoration; retry successfully |
 | Process interruption | Real SIGKILL after transaction, pending pointer, timer, legacy file, owned file and netlink load; recover recognized legacy state and preserve Fail2ban |
 | Boot | Initial adoption pending at full guest power-off; recover legacy policy on fresh boot; committed adoption plus later pending change; recover committed minimal policy; second cold boot retains it |
@@ -40,7 +40,7 @@ Local development runs completed the main transactions, migration, parser tests,
 
 ## Reports and CI
 
-Unit tests currently total **63** and produce `.build/reports/unit.xml`. The VM runner produces `.build/reports/vm/matrix.json`, `junit.xml`, phase logs, effective rules, package versions, unit journals and Fail2ban status. CI uploads these reports even on failure. Security scan JSON is stored separately. Raw VM disks and SSH keys are excluded from Docker build context and artifact upload.
+Unit tests currently total **64** and produce `.build/reports/unit.xml`. The VM runner produces `.build/reports/vm/matrix.json`, `junit.xml`, phase logs, effective rules, package versions, unit journals and Fail2ban status. CI uploads these reports even on failure. Security scan JSON is stored separately. Raw VM disks and SSH keys are excluded from Docker build context and artifact upload.
 
 CI runs Python 3.11, 3.13 and 3.14 packaging/unit checks, security analysis, and the real Debian VM suite. Debian/kernel/package versions in each artifact identify what was actually exercised. A skipped or failed phase is not a passing scenario.
 

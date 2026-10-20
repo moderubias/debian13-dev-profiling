@@ -154,3 +154,11 @@ class ConfirmationTests(unittest.TestCase):
         with patch.object(controller, "_rollback") as rollback, self.assertRaisesRegex(NetworkError, "deadline expired"):
             controller.confirm("a" * 32, console=True)
         rollback.assert_called_once()
+
+
+class ApplyValidationTests(unittest.TestCase):
+    def test_non_integer_timeout_is_rejected_before_host_mutation(self):
+        from d13dp.network import Controller
+        for timeout in (120.5, True, '120', 0, 601):
+            with self.subTest(timeout=timeout), self.assertRaises(NetworkError):
+                Controller().apply(load_network_policy('minimal'), '', timeout=timeout)

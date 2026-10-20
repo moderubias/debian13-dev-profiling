@@ -41,6 +41,11 @@ def run(*args: str, input: str | None = None) -> str:
     return result.stdout
 
 
+def file_text(path: Path) -> str:
+    # Preserve CRLF and other valid UTF-8 bytes in backups and drift comparisons.
+    return path.read_bytes().decode('utf-8')
+
+
 def trusted(path: Path) -> None:
     """All existing path components must be root-owned and privately writable."""
     for part in (*reversed(path.parents), path):
@@ -179,7 +184,7 @@ def legacy_file_matches(record, *, retained):
         return False
     stat = path.stat()
     content = migration.source(record['tcp'], retained=True) if retained else record['source']
-    return path.read_text() == content and stat.st_mode & 0o7777 == record['mode'] and stat.st_gid == record['gid']
+    return file_text(path) == content and stat.st_mode & 0o7777 == record['mode'] and stat.st_gid == record['gid']
 
 
 def system_conflicts() -> list[str]:
@@ -313,7 +318,7 @@ class Controller:
                 issues.append(f"Run network install first; missing {path}")
         if not issues:
             expected = unit_text(runtime_command())
-            if self.paths.unit.read_text() != expected:
+            if file_text(self.paths.unit) != expected:
                 issues.append("Managed systemd unit has changed")
             fragment = run("systemctl", "show", "d13dp-network.service", "-p", "FragmentPath", "--value").strip()
             dropins = run("systemctl", "show", "d13dp-network.service", "-p", "DropInPaths", "--value").strip()
@@ -334,7 +339,7 @@ class Controller:
         for path in (self.paths.config, self.paths.unit, self.paths.state, self.paths.lock):
             trusted(path)
         wanted = unit_text(command)
-        if self.paths.unit.exists() and self.paths.unit.read_text() != wanted:
+        if self.paths.unit.exists() and file_text(self.paths.unit) != wanted:
             raise NetworkError("Existing network unit differs; refusing takeover")
         if self.paths.config.exists() and not self.paths.state.exists():
             raise NetworkError("Existing unjournaled network configuration; refusing takeover")
@@ -394,7 +399,7 @@ class Controller:
         if adopt_filter:
             path = Path('/etc/nftables.conf')
             trusted(path)
-            return migration.recognize(self.rules(), path.read_text(), mode=path.stat().st_mode & 0o7777, gid=path.stat().st_gid)
+            return migration.recognize(self.rules(), file_text(path), mode=path.stat().st_mode & 0o7777, gid=path.stat().st_gid)
         return None
 
     def snapshot(self, adopt_filter=False) -> tuple[list[dict], list[str]]:
@@ -444,7 +449,7 @@ class Controller:
             issues.append("Owned table structure differs from the supported schema; review required")
         content = render_network(policy)
         trusted(self.paths.config)
-        old = self.paths.config.read_text() if self.paths.config.exists() else ""
+        old = file_text(self.paths.config) if self.paths.config.exists() else ""
         committed = state["committed"]
         if committed:
             previous_policy = NetworkPolicy(**{key: tuple(value) if isinstance(value, list) else value for key, value in committed["policy"].items()})
@@ -472,7 +477,7 @@ class Controller:
         return report
 
     def apply(self, policy: NetworkPolicy, digest: str, timeout: int = 120, console: bool = False, adopt_filter: bool = False) -> dict:
-        if not 15 <= timeout <= 600:
+        if type(timeout) is not int or not 15 <= timeout <= 600:
             raise NetworkError("Confirmation timeout must be between 15 and 600 seconds")
         with self.locked():
             report = self.plan(policy, adopt_filter=adopt_filter)
@@ -495,7 +500,7 @@ class Controller:
             if report['migration']:
                 trial_restore = migration.restore(report['migration'], migration.objects(report['migration']['tcp'], retained=True))
                 run('nft', '-c', '-f', '-', input=batch + restore + trial_restore)
-            tx = {"id": identifier, "before": before["committed"], "before_config": self.paths.config.read_text(), "restore": restore,
+            tx = {"id": identifier, "before": before["committed"], "before_config": file_text(self.paths.config), "restore": restore,
                   "before_live": report["effective_before"], "after": report["effective_after"], "config": content,
                   "policy": asdict(policy), "session": list(connection) if connection else None,
                   "boot": boot_id(), "deadline": time.monotonic() + timeout, "timeout": timeout}
@@ -581,7 +586,7 @@ class Controller:
                 expected_file = render_network(policy)
                 expected_live = expected_state(policy)
             trusted(self.paths.config)
-            if self.paths.config.read_text() != expected_file:
+            if file_text(self.paths.config) != expected_file:
                 raise NetworkError("Refusing startup: persistent configuration differs from the committed policy")
             live, conflicts = self.snapshot()
             if not committed and not live and conflicts == ['Foreign inbound base chain: inet filter input']:
@@ -627,7 +632,7 @@ class Controller:
             legacy = tx.get('migration') or (tx['before'] or {}).get('legacy')
             if legacy and (not legacy_file_matches(legacy, retained=True) or migration.table_objects(self.rules()) != migration.objects(legacy['tcp'], retained=True)):
                 issues.append('Legacy persistent/effective state changed before confirmation')
-            if actual != tx["after"] or self.paths.config.read_text() != tx["config"] or issues or not ssh_listeners() <= set(policy.tcp):
+            if actual != tx["after"] or file_text(self.paths.config) != tx["config"] or issues or not ssh_listeners() <= set(policy.tcp):
                 raise NetworkError("State or prerequisites changed; cannot confirm; rollback remains armed")
             if time.monotonic() >= tx["deadline"]:
                 self._rollback(identifier)
@@ -649,7 +654,7 @@ def dispatch(args) -> int:
             rules = load_json(args.ruleset).get('nftables')
             if not isinstance(rules, list):
                 raise NetworkError('Expected captured nft -j list ruleset JSON')
-            record = migration.recognize(rules, args.source.read_text())
+            record = migration.recognize(rules, file_text(args.source))
             own, conflicts = inspect_rules(rules)
             conflicts = [c for c in conflicts if c != 'Foreign inbound base chain: inet filter input']
             if own:
@@ -680,7 +685,7 @@ def dispatch(args) -> int:
             persisted = None
             if committed:
                 trusted(controller.paths.config)
-                persisted = controller.paths.config.exists() and controller.paths.config.read_text() == render_network(declared_policy(committed["policy"]))
+                persisted = controller.paths.config.exists() and file_text(controller.paths.config) == render_network(declared_policy(committed["policy"]))
                 if 'legacy' in committed:
                     legacy_path = Path('/etc/nftables.conf')
                     trusted(legacy_path)

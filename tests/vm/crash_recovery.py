@@ -54,7 +54,7 @@ def main():
         controller.recover()
         assert controller.read_state() == {'version': 1, 'committed': None, 'pending': None}
         assert controller.snapshot(adopt_filter=True) == ([], [])
-        assert Path('/etc/nftables.conf').read_text() == original
+        assert Path('/etc/nftables.conf').read_bytes().decode() == original
         assert migration.table_objects(controller.rules()) == migration.objects([22])
         assert run('nft', '-j', 'list', 'table', 'inet', 'f2b-table').stdout == f2b
     # Leave a committed baseline for the general cold-reboot checks.
@@ -82,7 +82,7 @@ def migration_boot_check():
     controller = Controller()
     assert controller.read_state() == {'version':1,'committed':None,'pending':None}
     assert controller.snapshot(adopt_filter=True) == ([], [])
-    assert Path('/etc/nftables.conf').read_text() == Path('/var/lib/d13dp/qa-migration-boot-source').read_text()
+    assert Path('/etc/nftables.conf').read_bytes() == Path('/var/lib/d13dp/qa-migration-boot-source').read_bytes()
     assert Path('/etc/nftables.conf').stat().st_mode & 0o777 == 0o640
     policy = load_network_policy('minimal')
     plan = controller.plan(policy, adopt_filter=True)

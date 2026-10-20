@@ -26,7 +26,7 @@ def prepare():
     else:
         raise AssertionError('Fail2ban did not become ready')
     run('fail2ban-client', 'set', 'sshd', 'banip', '203.0.113.99')
-    source = migration.source([22])
+    source = migration.source([22]).replace('\n', '\r\n')
     Path('/etc/nftables.conf').write_text(source)
     Path('/etc/nftables.conf').chmod(0o640)
     run('systemctl', 'enable', '--now', 'nftables.service')
@@ -77,7 +77,7 @@ def main():
         connect(address, 80, False)
         connect(address, 443, False)
     assert Path('/etc/nftables.conf').stat().st_mode & 0o777 == 0o640
-    assert Path('/etc/nftables.conf').read_text() == original
+    assert Path('/etc/nftables.conf').read_bytes().decode() == original
     assert migration.table_objects(Controller().rules()) == migration.objects([22])
     assert '203.0.113.100' in run('nft', 'list', 'table', 'inet', 'f2b-table').stdout
     print('Checking command failure after persistent legacy rewrite and rollback retry', flush=True)

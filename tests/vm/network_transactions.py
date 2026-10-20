@@ -226,6 +226,8 @@ chain forward { type filter hook forward priority 0; policy accept; }
     print("Checking persistent and live structural drift conflicts", flush=True)
     config = Path("/etc/d13dp/network.nft")
     original = config.read_bytes()
+    config.write_bytes(original.replace(b'\n', b'\r\n'))
+    assert 'Persisted configuration drift' in cli('plan', '--profile', 'web', success=False).stdout
     config.write_bytes(original + b"# external edit\n")
     assert "Persisted configuration drift" in cli("plan", "--profile", "web", success=False).stdout
     preserved = all_rules()
