@@ -15,7 +15,11 @@ REPORTS = lab.ROOT / '.build/reports/vm'
 
 def main():
     REPORTS.mkdir(parents=True, exist_ok=True)
-    report = {'started_utc': datetime.now(timezone.utc).isoformat(), 'image_sha512': lab.BASE_SHA512, 'checks': []}
+    commit = lab.run('git','-C',str(lab.ROOT),'rev-parse','HEAD').stdout.strip()
+    def source_unchanged():
+        if lab.run('git','-C',str(lab.ROOT),'rev-parse','HEAD').stdout.strip() != commit or lab.run('git','-C',str(lab.ROOT),'status','--porcelain').stdout:
+            raise RuntimeError('VM inputs changed: commit source changes and rerun from a clean checkout')
+    report = {'source_commit': commit, 'started_utc': datetime.now(timezone.utc).isoformat(), 'image_sha512': lab.BASE_SHA512, 'checks': []}
     suite = ET.Element('testsuite', name='debian13-qemu')
     completed = False
     def phase(name, function):
@@ -24,7 +28,9 @@ def main():
         entry = {'name': name, 'status': 'failed'}
         case = ET.SubElement(suite, 'testcase', classname='debian13.qemu', name=name)
         try:
+            source_unchanged()
             function()
+            source_unchanged()
             entry['status'] = 'passed'
         except Exception:
             entry['error'] = traceback.format_exc()

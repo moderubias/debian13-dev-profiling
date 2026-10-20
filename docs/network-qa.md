@@ -12,7 +12,7 @@ python3 tests/run_unit.py
 python3 tests/vm/run.py
 ```
 
-Requires Docker, internet access, approximately 2 GiB available memory and several GiB disk space. Hardware virtualization is unnecessary. The runner refuses an existing `.build/vm/lab.json` to avoid destroying retained diagnostics. Use a new checkout or explicitly archive previous task-owned VM state before preparing another run. Do not run guest programs directly on a host. Guards require QEMU virtualization, a cloud-init fixture marker and `D13DP_ISOLATED_QA=1`.
+Run from a clean Git checkout of the commit under test; the runner records the SHA and refuses changed inputs between phases. Requires Docker, internet access, approximately 2 GiB available memory and several GiB disk space. Hardware virtualization is unnecessary. The runner refuses an existing `.build/vm/lab.json` to avoid destroying retained diagnostics. Use a new checkout or explicitly archive previous task-owned VM state before preparing another run. Do not run guest programs directly on a host. Guards require QEMU virtualization, a cloud-init fixture marker and `D13DP_ISOLATED_QA=1`.
 
 The runner downloads only the pinned base image and verifies its embedded SHA-512. Debian package updates are obtained at provisioning time; versions are captured in the report rather than claimed to be bit-for-bit immutable. No production credentials are used. Guest-only SSH keys remain in the private `.build/vm` directory and are never uploaded as CI artifacts.
 
