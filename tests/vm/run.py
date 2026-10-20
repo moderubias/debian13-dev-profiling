@@ -17,6 +17,7 @@ def main():
     REPORTS.mkdir(parents=True, exist_ok=True)
     report = {'started_utc': datetime.now(timezone.utc).isoformat(), 'image_sha512': lab.BASE_SHA512, 'checks': []}
     suite = ET.Element('testsuite', name='debian13-qemu')
+    completed = False
     def phase(name, function):
         print(name, flush=True)
         started = time.monotonic()
@@ -60,14 +61,17 @@ def main():
         phase('prepare-pending-migration-boot', lambda: guest('tests/vm/crash_recovery.py', '--prepare-migration-boot'))
         phase('cold-boot-initial-migration', lambda: lab.run(sys.executable, str(lab.ROOT/'tests/vm/lab.py'), 'cold-boot', timeout=600))
         # /tmp is cleared at boot: refresh helper modules before recovery assertions.
-        for name in ('network_transactions.py','migration_transactions.py'):
-            lab.run(sys.executable, str(lab.ROOT/'tests/vm/lab.py'), 'copy', str(lab.ROOT/'tests/vm'/name), '/tmp/'+name)
+        def refresh_helpers():
+            for name in ('network_transactions.py','migration_transactions.py'):
+                lab.run(sys.executable, str(lab.ROOT/'tests/vm/lab.py'), 'copy', str(lab.ROOT/'tests/vm'/name), '/tmp/'+name)
+        phase('refresh-boot-helpers', refresh_helpers)
         phase('verify-initial-migration-recovery', lambda: guest('tests/vm/crash_recovery.py', '--check-migration-boot'))
         phase('prepare-pending-boot', lambda: guest('tests/vm/network_transactions.py', '--prepare-boot'))
         phase('cold-boot-pending', lambda: lab.run(sys.executable, str(lab.ROOT/'tests/vm/lab.py'), 'cold-boot', timeout=600))
         phase('verify-boot-rollback', lambda: guest('tests/vm/network_transactions.py', '--check-boot'))
         phase('cold-boot-committed', lambda: lab.run(sys.executable, str(lab.ROOT/'tests/vm/lab.py'), 'cold-boot', timeout=600))
         phase('verify-committed-persistence', lambda: guest('tests/vm/network_transactions.py', '--check-boot'))
+        completed = True
     finally:
         for name, command in {
             'nftables.json': 'sudo nft -j list ruleset',
@@ -82,7 +86,7 @@ def main():
                 (REPORTS / name).write_text(result.stdout + result.stderr)
             except Exception as exc:
                 (REPORTS / name).write_text(str(exc))
-        report['passed'] = all(entry['status'] == 'passed' for entry in report['checks'])
+        report['passed'] = completed and all(entry['status'] == 'passed' for entry in report['checks'])
         (REPORTS/'matrix.json').write_text(json.dumps(report, indent=2)+'\n')
         suite.set('tests', str(len(report['checks'])))
         suite.set('failures', str(sum(entry['status'] != 'passed' for entry in report['checks'])))

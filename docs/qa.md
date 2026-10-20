@@ -1,4 +1,4 @@
-# QA report
+# Initial archive QA report
 
 Date: 2026-10-20. Scope: the supplied v0.1.0 archive, reviewed and corrected for the initial repository publication using OpenAI Codex (GPT-6).
 
@@ -30,9 +30,9 @@ The first hosted run exposed deprecated Node.js 20 actions. CI now uses the docu
 - Both standalone nftables profiles passed `nft -c -f` and loaded twice successfully in the container's network namespace. A separate sentinel table survived both loads; the Docker profile produced no firewall candidate.
 - The installed CLI returned a Debian 13 JSON audit and detected the test default-drop input policy. A read-only smoke audit on the Arch Linux development host correctly marked the OS unsupported.
 
-## Reproduce
+## Historical reproduction
 
-From the repository root:
+The commands below refer to the original publication commit (before v0.3.0a1); those container files have since been replaced. For current checks use [the VM QA guide](network-qa.md). At that initial revision:
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v

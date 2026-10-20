@@ -120,22 +120,19 @@ See [`docs/architecture.md`](docs/architecture.md), [`docs/threat-model.md`](doc
 - Generated nftables policy uses its own table and does not delete Fail2ban tables, but adding another base chain cannot be assumed to permit ports blocked by an existing chain. Test and migrate deliberately.
 - SSH auditing uses `sshd -T` without connection-specific `-C` parameters; `Match` blocks for particular users or source addresses require separate review.
 - Automatic-update checks inspect installed packages and APT configuration, not timer execution, successful upgrades, or the security coverage of configured origins.
-- Currently targets Debian 13 only. Container integration exercises real Debian parsers and an isolated nftables network namespace. The network slice also has isolated systemd, SSH, IPv4/IPv6 packet, conntrack, timer, failure-injection, and container-restart tests. Full VM deployment and cold reboot remain unverified. See the [network QA report](docs/network-qa.md) and [initial archive QA report](docs/qa.md).
+- Currently targets Debian 13 only. Real QEMU VM tests cover the bounded firewall transaction/migration lifecycle, including separate SSH sessions, IPv4/IPv6, conntrack, failures, SIGKILL and cold reboot. They do not certify general production deployment. See the [current QA report](docs/network-qa.md).
 
 ## Development and QA
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+python3 tests/run_unit.py
 python3 -m compileall -q src tests
-
-docker build -t d13dp-qa -f tests/integration/Dockerfile .
-docker run --rm --network none --cap-add NET_ADMIN d13dp-qa
-
-# Real systemd/nftables transaction checks in a disposable container:
-tests/integration/run-systemd.sh
+python3 -m pip install build
+# Real networking mutations run only in a disposable QEMU guest.
+python3 tests/vm/run.py
 ```
 
-The Docker run command requires Docker and grants network administration only inside the disposable container's network namespace. It loads test rules there; use the command exactly as shown. CI runs unit and packaging checks on Python 3.11, 3.13, and 3.14, plus Debian 13 parser integration and a separate systemd transaction job. The systemd runner uses an isolated privileged container, private cgroups, and no host mounts. See [docs/network-qa.md](docs/network-qa.md) for coverage and remaining limits.
+The runner requires Docker to execute an unprivileged QEMU process; the guest has its own Debian kernel. Guest-only SSH keys and disks stay in `.build/vm` and are excluded from CI artifacts. CI checks Python 3.11/3.13/3.14, packaging, static security analysis and the real VM matrix. See [docs/network-qa.md](docs/network-qa.md) for requirements, reports and remaining limits.
 
 ## Agent-assisted development
 
