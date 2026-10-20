@@ -1,4 +1,4 @@
-"""Run ONLY in the disposable Debian 13 systemd QA container (no host mounts)."""
+"""Run ONLY in the disposable Debian 13 QEMU QA VM."""
 import json
 import os
 from pathlib import Path
@@ -10,6 +10,11 @@ import sys
 import threading
 import time
 from unittest.mock import patch
+
+def guard():
+    if os.environ.get("D13DP_ISOLATED_QA") != "1" or not Path("/etc/d13dp-qa-vm").is_file() or run("systemd-detect-virt", "--vm", check=False).stdout.strip() != "qemu":
+        raise SystemExit("Requires the disposable QEMU VM and D13DP_ISOLATED_QA=1")
+
 
 CLI = "/opt/d13dp/bin/d13dp"
 SSH = ["ip", "netns", "exec", "qa-client", "ssh", "-F", "/dev/null", "-i", "/run/qa-key", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=3", "-o", "ControlMaster=no"]
@@ -104,8 +109,10 @@ def check_persistent(process):
 
 
 def main():
-    if os.environ.get("D13DP_ISOLATED_QA") != "1" or not Path("/.dockerenv").is_file() or set(os.listdir("/sys/class/net")) != {"lo"}:
-        raise SystemExit("Requires a fresh, disposable Docker container with --network none and D13DP_ISOLATED_QA=1")
+    guard()
+    run("systemctl", "disable", "--now", "docker.service", "docker.socket", "caddy.service")
+    for family, table in (("ip", "nat"), ("ip", "filter")):
+        run("nft", "delete", "table", family, table, check=False)
     assert Path("/proc/1/comm").read_text().strip() == "systemd"
     for _ in range(50):
         if run("systemctl", "show", "-p", "Version", check=False).returncode == 0:
@@ -172,6 +179,9 @@ chain forward { type filter hook forward priority 0; policy accept; }
     before = marker()
     assert cli("apply", "--profile", "web", remote=True)["changed"] is False
     assert marker() == before
+    for _ in range(10):
+        assert cli("apply", "--profile", "web", remote=True)["changed"] is False
+        assert marker() == before
     transition("minimal")
     for address in ("192.0.2.1", "fd42:13::1"):
         connect(address, 22)
@@ -231,6 +241,14 @@ chain forward { type filter hook forward priority 0; policy accept; }
     rules = json.loads(run("nft", "-j", "list", "chain", "inet", "d13dp_network", "input").stdout)["nftables"]
     handle = [obj["rule"]["handle"] for obj in rules if "rule" in obj][-1]
     nft(f"delete rule inet d13dp_network input handle {handle}\n")
+    print("Checking observed port drift and guarded reconciliation", flush=True)
+    nft('add element inet d13dp_network allowed_tcp { 8443 }\n')
+    drift = cli('status', success=False)
+    assert drift.returncode == 2 and json.loads(drift.stdout)['drift'] is True
+    verification = cli('verify', '--profile', 'minimal', success=False)
+    assert verification.returncode == 2
+    transition('minimal')
+    assert cli('verify', '--profile', 'minimal')['changed'] is False
     print("Checking immediate recovery after a simulated nft load failure", flush=True)
     from d13dp.network import Controller, NetworkError
     from d13dp.network_policy import load_network_policy
@@ -301,15 +319,15 @@ chain forward { type filter hook forward priority 0; policy accept; }
 
 
 def boot_prepare():
-    assert os.environ.get("D13DP_ISOLATED_QA") == "1" and Path("/.dockerenv").is_file()
+    guard()
     pending = transition("web", confirm=False, remote=False, timeout=120)
     assert pending["changed"]
     Path("/var/lib/d13dp/qa-boot-transaction").write_text(pending["transaction"])
-    print("Pending transaction prepared for container restart", flush=True)
+    print("Pending transaction prepared for cold VM boot", flush=True)
 
 
 def boot_check():
-    assert os.environ.get("D13DP_ISOLATED_QA") == "1" and Path("/.dockerenv").is_file()
+    guard()
     for _ in range(100):
         state = run("systemctl", "is-active", "d13dp-network.service", check=False)
         if state.stdout.strip() == "active":
@@ -324,7 +342,7 @@ def boot_check():
     assert [obj["set"]["elem"] for obj in live if obj.get("set", {}).get("name") == "allowed_tcp"] == [[22]]
     assert "elements = { 22 }" in Path("/etc/d13dp/network.nft").read_text()
     assert "22, 80, 443" not in Path("/etc/d13dp/network.nft").read_text()
-    print("Pending transaction recovered after container restart", flush=True)
+    print("Pending transaction recovered after cold VM boot", flush=True)
 
 
 if __name__ == "__main__":

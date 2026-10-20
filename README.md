@@ -4,6 +4,8 @@ A Debian 13 (trixie) host security auditing, policy planning, and deterministic 
 
 **Status: v0.3.0a1, experimental and pre-production.** `audit`, `plan`, `render`, and `manifest` retain their read-only/candidate-generation behavior. The separate `network` command provides a narrowly scoped, explicitly installed host-input firewall transaction workflow with timed confirmation and rollback. It is **not a general production hardening executor**: it does not configure SSH, install application services, manage Docker DNAT, or apply the other rendered modules. Read the [network transaction guide](docs/network.md) before using it.
 
+The requested universal manager remains unfinished. See the [delivery status and remaining gates](docs/delivery-status.md), [VM QA matrix](docs/network-qa.md), and [implementation security review](docs/implementation-security-review.md). Kiyoro has a [separate, unapplied migration proposal](docs/kiyoro-migration-plan.md).
+
 ## What is implemented
 
 - Experimental `network install|migration-plan|plan|diff|apply|verify|confirm|rollback|status` with an owned nftables table, observed-state diffs, SSH preservation checks, durable transactions, a systemd rollback timer, and startup recovery.

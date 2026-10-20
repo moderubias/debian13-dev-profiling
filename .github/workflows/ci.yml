@@ -20,7 +20,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: PYTHONPATH=src python -m unittest discover -s tests -v
+      - run: python tests/run_unit.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-${{ matrix.python-version }}
+          path: .build/reports/unit.xml
       - run: python -m compileall -q src tests
       - run: ./d13dp plan --profile docker
       - run: ./d13dp render --profile web --output build/web
@@ -39,20 +44,43 @@ jobs:
             /tmp/d13dp-installed/bin/d13dp manifest --profile "$profile"
           done
 
-  debian13:
+  network-vm:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
-      - name: Build Debian 13 QA image
-        run: docker build -t d13dp-qa -f tests/integration/Dockerfile .
-      - name: Validate configuration in an isolated network namespace
-        run: docker run --rm --network none --cap-add NET_ADMIN d13dp-qa
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install build
+      - name: Exercise real Debian 13 kernel, nftables, systemd, SSH and Fail2ban
+        run: python tests/vm/run.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: debian13-vm-reports
+          path: .build/reports/vm/
 
-  network-systemd:
+  security:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - name: Exercise transactions with real nftables, systemd, SSH and IPv4/IPv6
-        run: tests/integration/run-systemd.sh
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install ruff==0.17.1 bandit==1.9.4 pip-audit==2.10.1 build
+      - run: mkdir -p .build/reports/security
+      - run: ruff check --select F src tests
+      - name: Scan privileged implementation (medium/high findings block)
+        run: bandit -r src -ll -f json -o .build/reports/security/bandit.json
+      - name: Audit installed project runtime dependencies
+        run: |
+          python -m venv /tmp/d13dp-audit
+          /tmp/d13dp-audit/bin/pip install --no-deps .
+          pip-audit --path /tmp/d13dp-audit/lib/python3.13/site-packages --format json --output .build/reports/security/dependencies.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: .build/reports/security/
