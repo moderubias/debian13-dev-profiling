@@ -1,6 +1,6 @@
 # Experimental host-input network transactions
 
-Version 0.2.0a1 implements one vertical slice: an owned nftables INPUT policy, a persistent boot unit, a reviewed observed-state plan, provisional apply, bounded confirmation, and rollback. It is not a complete production hardening tool. The legacy `render` output is not consumed by this engine.
+Version 0.3.0a1 implements one vertical slice: an owned nftables INPUT policy, a persistent boot unit, a reviewed observed-state plan, provisional apply, bounded confirmation, and rollback. It is not a complete production hardening tool. The legacy `render` output is not consumed by this engine.
 
 ## Scope and profiles
 
@@ -15,7 +15,7 @@ The owned table is `inet d13dp_network`. One INPUT base chain defaults to drop. 
 
 Removing a permission denies **new connections**. Already established TCP/UDP flows remain accepted through conntrack until they close or expire. The tool does not flush conntrack or terminate application connections.
 
-The engine never changes forwarding, output chains, Docker rules, Fail2ban tables, SSH configuration, or application services. In particular, Docker-published ports traverse DNAT/forwarding and are **not controlled by host INPUT allowances**. Existing foreign INPUT, prerouting, or ingress hooks are rejected. Consequently, common Docker bridge/NAT installations require a future backend-specific integration and are currently refused, even with `--profile docker`. The Docker profile does not claim full Docker networking support; only coexistence with non-conflicting forwarding rules and host networking is covered.
+The engine never changes forwarding, output chains, Docker rules, Fail2ban tables, SSH configuration, or application services. In particular, Docker-published ports traverse DNAT/forwarding and are **not controlled by host INPUT allowances**. Existing foreign INPUT, prerouting, or ingress hooks are rejected, except for the explicit, strictly recognized legacy INPUT migration described in [firewall-migration.md](firewall-migration.md). Consequently, common Docker bridge/NAT installations require a future backend-specific integration and are currently refused, even with `--profile docker`. The Docker profile does not claim full Docker networking support; only coexistence with non-conflicting forwarding rules and host networking is covered.
 
 ## Prerequisites and explicit installation
 
@@ -38,7 +38,7 @@ ExecStop=
 ExecStop=/usr/bin/true
 ```
 
-After an explicitly reviewed override, `systemctl daemon-reload` updates unit metadata without reloading the firewall. Any persistent rules must replace only their owned tables. On a host such as Kiyoro with an existing `inet filter` INPUT chain, this engine will still refuse apply: automatic adoption/migration is not implemented. Use a separately reviewed repair of that existing owner instead; see [the recovery report](kiyoro-recovery.md).
+After an explicitly reviewed override, `systemctl daemon-reload` updates unit metadata without reloading the firewall. Any persistent rules must replace only their owned tables. An existing `inet filter` INPUT chain remains a conflict without explicit adoption. The supported template can be reviewed offline and migrated through the [guarded migration workflow](firewall-migration.md). Kiyoro requires its own separately approved rollout; see [the proposed plan](kiyoro-migration-plan.md).
 
 Install the dedicated unit explicitly:
 
@@ -107,4 +107,8 @@ The transient timer runs `d13dp-network-rollback-<transaction>.service` with ret
 
 Backups and the journal are under `/var/lib/d13dp/network`, with root-only writes and atomic replacement plus file/directory `fsync`. Runtime modules and unit text are rooted in the installed virtualenv. Do not upgrade/remove that runtime or edit managed units while a transaction is pending. Installer writes and boot-unit enabling are explicit setup operations, not a transaction spanning all systemd files.
 
-This is a Linux/systemd failsafe, not an out-of-band recovery system. Disk failure, unavailable systemd/kernel, root interference, unsupported boot ordering, and loss of the installed runtime can prevent timely recovery. No external connectivity supervisor or provider-console verification exists. Recovery errors retain the journal and require console inspection. Full VM cold reboot and deployment certification remain outstanding; see [the QA report](network-qa.md).
+This is a Linux/systemd failsafe, not an out-of-band recovery system. Disk failure, unavailable systemd/kernel, root interference, unsupported boot ordering, and loss of the installed runtime can prevent timely recovery. No external connectivity supervisor or provider-console verification exists. Recovery errors retain the journal and require console inspection. Real VM cold reboot is covered by the current matrix; deployment certification remains outstanding; see [the QA report](network-qa.md).
+
+## Inspection exit codes
+
+`network diff` is an alias for the observed-state `plan`. `network verify` returns 0 only when desired live rules, persistence, SSH prerequisites and unit ownership match; it returns 2 for differences/conflicts and 1 for an operational/validation error. `network status` returns 2 for committed live/persistent drift, 1 for conflicts/errors, and 0 for a valid inspected state (including a visibly pending transaction). Other network commands return 1 on refusal and 0 on success; argument syntax errors return 2. `changed: false` means no system writes were needed. Read the JSON fields rather than treating successful inspection as external reachability proof.

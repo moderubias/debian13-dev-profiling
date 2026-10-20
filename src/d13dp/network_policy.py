@@ -14,6 +14,18 @@ class NetworkPolicy:
     udp: tuple[int, ...] = ()
     ssh_ports: tuple[int, ...] = (22,)
 
+    def __post_init__(self):
+        import re
+        if not isinstance(self.name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,47}", self.name):
+            raise ValueError("Invalid network policy name")
+        for key in ("tcp", "udp", "ssh_ports"):
+            value = getattr(self, key)
+            if not isinstance(value, tuple):
+                raise ValueError(f"{key} must be a tuple")
+            object.__setattr__(self, key, ports(list(value), key))
+        if not set(self.ssh_ports) <= set(self.tcp):
+            raise ValueError("Declared SSH ports must be allowed over TCP")
+
 
 def ports(value: object, label: str, empty: bool = True) -> tuple[int, ...]:
     if not isinstance(value, list) or (not value and not empty):
@@ -89,3 +101,10 @@ def normalize(objects: list[dict]) -> list[dict]:
         kind, value = next(iter(item.items()))
         return kind, value.get("family", ""), value.get("table", ""), value.get("name", "")
     return sorted(definitions, key=key) + rules
+
+
+def declared_policy(record: object) -> NetworkPolicy:
+    if not isinstance(record, dict) or set(record) != {"name", "tcp", "udp", "ssh_ports"}:
+        raise ValueError("Invalid declared network policy")
+    policy = NetworkPolicy(record["name"], ports(record["tcp"], "tcp"), ports(record["udp"], "udp"), ports(record["ssh_ports"], "ssh_ports", empty=False))
+    return policy

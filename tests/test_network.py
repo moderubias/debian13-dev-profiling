@@ -77,8 +77,10 @@ class NetworkInspectionTests(unittest.TestCase):
 
     def test_fail2ban_drop_only_exception(self):
         chain = {"chain": {"family": "inet", "table": "f2b-table", "name": "f2b-chain", "type": "filter", "hook": "input", "policy": "accept"}}
-        rule = {"rule": {"family": "inet", "table": "f2b-table", "chain": "f2b-chain", "expr": [{"match": {}}, {"reject": None}]}}
-        self.assertFalse(inspect_rules([chain, rule])[1])
+        rule = {"rule": {"family": "inet", "table": "f2b-table", "chain": "f2b-chain", "expr": [{"match": {"op":"==", "left":{"payload":{"protocol":"tcp","field":"dport"}}, "right":22}}, {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"@bans"}}, {"reject": None}]}}
+        address_set = {"set":{"family":"inet","table":"f2b-table","name":"bans","type":"ipv4_addr"}}
+        self.assertFalse(inspect_rules([chain, rule, address_set])[1])
+        self.assertTrue(inspect_rules([chain, rule])[1])
         bad = copy.deepcopy(rule)
         bad["rule"]["expr"][-1] = {"accept": None}
         self.assertTrue(inspect_rules([chain, bad])[1])

@@ -45,10 +45,19 @@ def _parser() -> argparse.ArgumentParser:
     manifest_source.add_argument("--config", type=Path, help="Custom TOML profile instead of --profile")
     network = sub.add_parser("network", help="Experimental transactional host-input firewall management")
     commands = network.add_subparsers(dest="network_command", required=True)
-    commands.add_parser("install", help="Explicitly install the owned boot/recovery unit; no policy is applied")
+    install = commands.add_parser("install", help="Explicitly install the owned boot/recovery unit; no policy is applied")
+    install.add_argument("--adopt-filter", action="store_true", help="Permit only the recognized legacy inet filter template")
     commands.add_parser("status", help="Inspect effective rules, journal and boot unit")
-    for operation in ("plan", "apply"):
+    migration_plan = commands.add_parser('migration-plan', help='Offline analysis of a captured legacy ruleset; never changes the host')
+    migration_plan.add_argument('--ruleset', required=True, type=Path)
+    migration_plan.add_argument('--source', required=True, type=Path)
+    migration_source = migration_plan.add_mutually_exclusive_group()
+    migration_source.add_argument('--profile', choices=('minimal','web','docker'), default='web')
+    migration_source.add_argument('--config', type=Path)
+
+    for operation in ("plan", "diff", "verify", "apply"):
         command = commands.add_parser(operation)
+        command.add_argument("--adopt-filter", action="store_true", help="Explicitly migrate the recognized legacy INPUT chain")
         source = command.add_mutually_exclusive_group()
         source.add_argument("--profile", choices=("minimal", "web", "docker"), default="minimal")
         source.add_argument("--config", type=Path, help="Custom network TOML: tcp, udp, ssh_ports arrays")

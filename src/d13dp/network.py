@@ -12,12 +12,15 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import shutil
 import sys
 import tempfile
 import time
 import uuid
 
-from .network_policy import TABLE, NetworkPolicy, expected_state, load_network_policy, normalize, render_network
+from .network_policy import TABLE, NetworkPolicy, declared_policy, expected_state, load_network_policy, normalize, render_network
+from . import migration
+from .journal import load_json, rollback_text, state_record, transaction_record
 
 
 class NetworkError(RuntimeError):
@@ -25,8 +28,12 @@ class NetworkError(RuntimeError):
 
 
 def run(*args: str, input: str | None = None) -> str:
+    safe_path = "/usr/sbin:/usr/bin:/sbin:/bin"
+    executable = args[0] if Path(args[0]).is_absolute() else shutil.which(args[0], path=safe_path)
+    if not executable:
+        raise NetworkError(f"Required system command is missing: {args[0]}")
     try:
-        result = subprocess.run(args, input=input, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env={**os.environ, "LC_ALL": "C"})
+        result = subprocess.run((executable, *args[1:]), input=input, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env={"PATH": safe_path, "LC_ALL": "C", "LANG": "C", "SYSTEMD_COLORS": "0"})
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise NetworkError(str(exc)) from exc
     if result.returncode:
@@ -55,7 +62,7 @@ def make_directory(path: Path) -> None:
             raise NetworkError(f"Expected a directory: {directory}")
 
 
-def atomic(path: Path, content: bytes, mode: int = 0o600) -> None:
+def atomic(path: Path, content: bytes, mode: int = 0o600, gid: int | None = None) -> None:
     trusted(path)
     make_directory(path.parent)
     temp = None
@@ -64,6 +71,8 @@ def atomic(path: Path, content: bytes, mode: int = 0o600) -> None:
             temp = Path(stream.name)
             stream.write(content)
             stream.flush()
+            if gid is not None:
+                os.fchown(stream.fileno(), 0, gid)
             os.fchmod(stream.fileno(), mode)
             os.fsync(stream.fileno())
         os.replace(temp, path)
@@ -163,16 +172,34 @@ def host_preflight() -> None:
         raise NetworkError("A real systemd PID 1 is required")
 
 
+def legacy_file_matches(record, *, retained):
+    path = Path('/etc/nftables.conf')
+    trusted(path)
+    if not path.is_file():
+        return False
+    stat = path.stat()
+    content = migration.source(record['tcp'], retained=True) if retained else record['source']
+    return path.read_text() == content and stat.st_mode & 0o7777 == record['mode'] and stat.st_gid == record['gid']
+
+
 def system_conflicts() -> list[str]:
     problems = []
     global_config = Path("/etc/nftables.conf")
     if global_config.exists():
+        trusted(global_config)
         text = global_config.read_text()
         if re.search(r"\bflush\s+ruleset\b|\binclude\b", text):
             problems.append("Review /etc/nftables.conf: global flush or includes are unsupported")
     stop = run("systemctl", "show", "nftables.service", "-p", "ExecStop", "--value")
     if re.search(r"\bflush\s+ruleset\b", stop):
         problems.append("nftables.service ExecStop contains a global flush; configure an explicit safe override first")
+    reload = run("systemctl", "show", "nftables.service", "-p", "ExecReload", "--value")
+    if re.search(r"\bflush\s+ruleset\b", reload):
+        problems.append("nftables.service ExecReload contains a global flush")
+    for executable in ('iptables-legacy-save', 'ip6tables-legacy-save'):
+        if shutil.which(executable, path='/usr/sbin:/usr/bin:/sbin:/bin'):
+            if any(line.startswith('-A ') or re.match(r'^:[^ ]+ DROP ', line) for line in run(executable).splitlines()):
+                problems.append(f'Active {executable} rules are outside nftables ownership; migration refused')
     return problems
 
 
@@ -201,8 +228,29 @@ def inspect_rules(objects: list[dict]) -> tuple[list[dict], list[str]]:
         rule = item.get("rule", {})
         if rule.get("family") == "inet" and rule.get("table") == "f2b-table":
             expr = rule.get("expr", [])
-            if rule.get("chain") not in f2b_chains or not expr or not any(key in expr[-1] for key in ("drop", "reject")) or any(set(part) - {"match", "counter", "drop", "reject"} for part in expr):
-                conflicts.append("Unsupported Fail2ban rule; review required")
+            sets = {item['set']['name']: item['set'].get('type') for item in objects
+                    if 'set' in item and item['set'].get('family') == 'inet' and item['set'].get('table') == 'f2b-table'}
+            matches = [part['match'] for part in expr if set(part) == {'match'}]
+            valid = rule.get('chain') in f2b_chains and len(matches) == 2 and len(expr) == 3
+            found = set()
+            for match in matches:
+                if set(match) != {'op', 'left', 'right'} or match['op'] != '==':
+                    valid = False
+                    continue
+                left, right = match['left'], match['right']
+                if left == {'payload': {'protocol': 'tcp', 'field': 'dport'}}:
+                    values = right.get('set', []) if isinstance(right, dict) else [right]
+                    valid = valid and bool(values) and all(type(port) is int and 1 <= port <= 65535 for port in values)
+                    found.add('port')
+                elif left in ({'payload': {'protocol': 'ip', 'field': 'saddr'}}, {'payload': {'protocol': 'ip6', 'field': 'saddr'}}):
+                    family = left['payload']['protocol']
+                    valid = valid and isinstance(right, str) and right.startswith('@') and sets.get(right[1:]) == ('ipv4_addr' if family == 'ip' else 'ipv6_addr')
+                    found.add('address')
+                else:
+                    valid = False
+            valid = valid and found == {'port', 'address'} and bool(expr) and set(expr[-1]) in ({'drop'}, {'reject'})
+            if not valid:
+                conflicts.append("Unsupported Fail2ban rule; expected TCP ports + source-address set + deny")
     return normalize(own), sorted(set(conflicts))
 
 
@@ -235,10 +283,7 @@ class Controller:
         trusted(self.paths.state)
         if not self.paths.state.exists():
             return {"version": 1, "committed": None, "pending": None}
-        state = json.loads(self.paths.state.read_text())
-        if state.get("version") != 1 or set(state) != {"version", "committed", "pending"}:
-            raise NetworkError("Unsupported network journal")
-        return state
+        return state_record(load_json(self.paths.state))
 
     @contextmanager
     def locked(self):
@@ -258,7 +303,7 @@ class Controller:
     def load_transaction(self, identifier: str) -> dict:
         path = self.transaction_path(identifier)
         trusted(path)
-        return json.loads(path.read_text())
+        return transaction_record(load_json(path), identifier)
 
     def prerequisites(self) -> list[str]:
         issues = system_conflicts()
@@ -280,7 +325,7 @@ class Controller:
                 issues.append("Managed firewall unit must be active")
         return issues
 
-    def install(self) -> dict:
+    def install(self, adopt_filter: bool = False) -> dict:
         host_preflight()
         command = runtime_command()
         problems = system_conflicts()
@@ -293,7 +338,7 @@ class Controller:
             raise NetworkError("Existing network unit differs; refusing takeover")
         if self.paths.config.exists() and not self.paths.state.exists():
             raise NetworkError("Existing unjournaled network configuration; refusing takeover")
-        own, inbound_conflicts = self.snapshot()
+        own, inbound_conflicts = self.snapshot(adopt_filter=adopt_filter)
         if inbound_conflicts:
             raise NetworkError("; ".join(inbound_conflicts))
         if own and not self.read_state()["committed"]:
@@ -332,16 +377,53 @@ class Controller:
             changed.append("start d13dp-network.service")
         return {"changes": changed, "scope": "Installed only the owned firewall unit; no other services restarted"}
 
-    def snapshot(self) -> tuple[list[dict], list[str]]:
+    def rules(self) -> list[dict]:
         data = json.loads(run("nft", "-j", "list", "ruleset"))
         if not isinstance(data, dict) or not isinstance(data.get("nftables"), list):
             raise NetworkError("Malformed nftables ruleset")
-        return inspect_rules(data["nftables"])
+        return data["nftables"]
 
-    def plan(self, policy: NetworkPolicy) -> dict:
+    def legacy(self, adopt_filter=False):
+        state = self.read_state()
+        if state['committed'] and 'legacy' in state['committed']:
+            return state['committed']['legacy']
+        if state['pending']:
+            tx = self.load_transaction(state['pending'])
+            if 'migration' in tx:
+                return tx['migration']
+        if adopt_filter:
+            path = Path('/etc/nftables.conf')
+            trusted(path)
+            return migration.recognize(self.rules(), path.read_text(), mode=path.stat().st_mode & 0o7777, gid=path.stat().st_gid)
+        return None
+
+    def snapshot(self, adopt_filter=False) -> tuple[list[dict], list[str]]:
+        rules = self.rules()
+        record = self.legacy(adopt_filter)
+        own, conflicts = inspect_rules(rules)
+        if record:
+            old = migration.table_objects(rules)
+            state = self.read_state()
+            allowed = [migration.objects(record['tcp'], retained=True)]
+            if not state['committed']:
+                allowed.append(migration.objects(record['tcp']))
+            if old in allowed:
+                conflicts = [c for c in conflicts if c != 'Foreign inbound base chain: inet filter input']
+            else:
+                conflicts.append('Adopted legacy table drift; unknown rules cannot be migrated')
+        return own, conflicts
+
+    def plan(self, policy: NetworkPolicy, adopt_filter=False) -> dict:
         host_preflight()
         state = self.read_state()
-        own, issues = self.snapshot()
+        own, issues = self.snapshot(adopt_filter=adopt_filter)
+        legacy = self.legacy(adopt_filter)
+        initial_migration = legacy if adopt_filter and not state['committed'] and not state['pending'] else None
+        if legacy:
+            if not legacy_file_matches(legacy, retained=bool(state['committed'])):
+                issues.append('Legacy persistent configuration drift')
+            if run('systemctl', 'is-enabled', 'nftables.service').strip() != 'enabled' or run('systemctl', 'is-active', 'nftables.service').strip() != 'active':
+                issues.append('Adoption requires enabled, active nftables.service')
         issues.extend(self.prerequisites())
         if state["pending"]:
             issues.append(f"Pending transaction: {state['pending']}; confirm or roll back first")
@@ -372,21 +454,28 @@ class Controller:
         if old and old != expected_file:
             issues.append("Persisted configuration drift; restore the committed file before applying")
         changed = own != wanted or old != content or committed is None
-        delta = {proto: {"add": sorted(set(values) - set(declared_ports(own, proto))), "remove": sorted(set(declared_ports(own, proto)) - set(values))}
+        observed_ports = {proto: declared_ports(own, proto) for proto in ('tcp', 'udp')}
+        if initial_migration:
+            observed_ports['tcp'] = initial_migration['tcp']
+        delta = {proto: {"add": sorted(set(values) - set(observed_ports[proto])), "remove": sorted(set(observed_ports[proto]) - set(values))}
                  for proto, values in (("tcp", policy.tcp), ("udp", policy.udp))}
         report = {"profile": policy.name, "changed": changed, "conflicts": sorted(set(issues)), "ports": delta,
                   "protected_ssh_ports": sorted(protected), "effective_before": own, "effective_after": wanted,
                   "file_diff": list(difflib.unified_diff(old.splitlines(), content.splitlines(), fromfile=str(self.paths.config), tofile="desired")),
                   "removal_policy": "Removed ports deny new connections; existing conntrack-established flows remain allowed",
                   "scope": "Host INPUT only; forwarding, NAT, Docker-published ports and foreign tables are not modified"}
+        if legacy:
+            report['scope'] = 'Host INPUT; adopt only the recognized legacy INPUT chain, retain forward/output and all Fail2ban objects'
+        report['migration'] = initial_migration
+        report['legacy_file_diff'] = list(difflib.unified_diff(legacy['source'].splitlines(), migration.source(legacy['tcp'], retained=True).splitlines(), fromfile='/etc/nftables.conf', tofile='retained forward/output')) if initial_migration else []
         report["digest"] = sha256(encode(report)).hexdigest()
         return report
 
-    def apply(self, policy: NetworkPolicy, digest: str, timeout: int = 120, console: bool = False) -> dict:
+    def apply(self, policy: NetworkPolicy, digest: str, timeout: int = 120, console: bool = False, adopt_filter: bool = False) -> dict:
         if not 15 <= timeout <= 600:
             raise NetworkError("Confirmation timeout must be between 15 and 600 seconds")
         with self.locked():
-            report = self.plan(policy)
+            report = self.plan(policy, adopt_filter=adopt_filter)
             if report["conflicts"]:
                 raise NetworkError("; ".join(report["conflicts"]))
             if not report["changed"]:
@@ -397,17 +486,21 @@ class Controller:
             if connection is None and not console:
                 raise NetworkError("Preserve SSH_CONNECTION or explicitly use --console with verified console access")
             content = render_network(policy)
-            run("nft", "-c", "-f", "-", input=content)
+            batch = (migration.detach() if report["migration"] else "") + content
+            run("nft", "-c", "-f", "-", input=batch)
             before = self.read_state()
             identifier = uuid.uuid4().hex
-            restore = f"destroy table inet {TABLE}\n"
-            if report["effective_before"]:
-                restore += run("nft", "list", "table", "inet", TABLE)
+            restore = rollback_text(report["effective_before"])
             run("nft", "-c", "-f", "-", input=restore)
+            if report['migration']:
+                trial_restore = migration.restore(report['migration'], migration.objects(report['migration']['tcp'], retained=True))
+                run('nft', '-c', '-f', '-', input=batch + restore + trial_restore)
             tx = {"id": identifier, "before": before["committed"], "before_config": self.paths.config.read_text(), "restore": restore,
                   "before_live": report["effective_before"], "after": report["effective_after"], "config": content,
                   "policy": asdict(policy), "session": list(connection) if connection else None,
                   "boot": boot_id(), "deadline": time.monotonic() + timeout, "timeout": timeout}
+            if report["migration"]:
+                tx["migration"] = report["migration"]
             atomic(self.transaction_path(identifier), encode(tx))
             self.save_state({**before, "pending": identifier})
             timer = "d13dp-network-rollback-" + identifier
@@ -422,13 +515,21 @@ class Controller:
                     raise NetworkError("Effective firewall or prerequisites changed during staging")
                 if boot_id() != tx["boot"] or time.monotonic() >= tx["deadline"]:
                     raise NetworkError("Confirmation deadline elapsed while staging")
+                if report['migration']:
+                    atomic(Path('/etc/nftables.conf'), migration.source(report['migration']['tcp'], retained=True).encode(), mode=report['migration']['mode'], gid=report['migration']['gid'])
                 atomic(self.paths.config, content.encode())
-                run("nft", "-f", "-", input=content)
+                run("nft", "-f", "-", input=batch)
                 actual, conflicts = self.snapshot()
+                if report["migration"]:
+                    if migration.table_objects(self.rules()) != migration.objects(report["migration"]["tcp"], retained=True):
+                        conflicts.append("Legacy INPUT was not detached")
                 if actual != tx["after"] or conflicts or time.monotonic() >= tx["deadline"]:
                     raise NetworkError("Post-apply effective state verification failed")
-            except BaseException:
-                self._rollback(identifier)
+            except BaseException as primary:
+                try:
+                    self._rollback(identifier)
+                except Exception as recovery:
+                    raise NetworkError(f"Apply failed: {primary}; rollback failed: {recovery}; pending journal retained: {identifier}") from primary
                 raise
             return {"changed": True, "transaction": identifier, "confirm_within_seconds": timeout,
                     "message": "Provisional: verify external access, then confirm from a new SSH connection"}
@@ -447,10 +548,17 @@ class Controller:
             return {"changed": False, "message": "Transaction is no longer pending"}
         tx = self.load_transaction(identifier)
         # Retain the journal until BOTH runtime and persistent restoration succeed.
-        run("nft", "-c", "-f", "-", input=tx["restore"])
+        restore = rollback_text(tx["before_live"])
+        if 'migration' in tx:
+            restore += migration.restore(tx['migration'], self.rules())
+        run("nft", "-c", "-f", "-", input=restore)
+        if 'migration' in tx:
+            atomic(Path('/etc/nftables.conf'), tx['migration']['source'].encode(), mode=tx['migration']['mode'], gid=tx['migration']['gid'])
         atomic(self.paths.config, tx["before_config"].encode())
-        run("nft", "-f", "-", input=tx["restore"])
+        run("nft", "-f", "-", input=restore)
         actual, _ = self.snapshot()
+        if "migration" in tx and migration.table_objects(self.rules()) != migration.objects(tx["migration"]["tcp"]):
+            raise NetworkError("Legacy INPUT rollback verification failed; pending journal retained")
         if actual != tx["before_live"]:
             raise NetworkError("Rollback verification failed; pending journal retained for retry")
         self.save_state({"version": 1, "committed": tx["before"], "pending": None})
@@ -476,6 +584,11 @@ class Controller:
             if self.paths.config.read_text() != expected_file:
                 raise NetworkError("Refusing startup: persistent configuration differs from the committed policy")
             live, conflicts = self.snapshot()
+            if not committed and not live and conflicts == ['Foreign inbound base chain: inet filter input']:
+                migration.recognize(self.rules(), Path('/etc/nftables.conf').read_text())
+                conflicts = []
+            if committed and 'legacy' in committed and not legacy_file_matches(committed['legacy'], retained=True):
+                conflicts.append('Adopted persistent configuration drift')
             conflicts.extend(system_conflicts())
             if conflicts or (live and live != expected_live):
                 raise NetworkError("Refusing startup: unsupported inbound topology or managed-table drift: " + "; ".join(conflicts))
@@ -511,13 +624,20 @@ class Controller:
             policy = NetworkPolicy(**{k: tuple(v) if isinstance(v, list) else v for k, v in tx["policy"].items()})
             actual, issues = self.snapshot()
             issues.extend(self.prerequisites())
+            legacy = tx.get('migration') or (tx['before'] or {}).get('legacy')
+            if legacy and (not legacy_file_matches(legacy, retained=True) or migration.table_objects(self.rules()) != migration.objects(legacy['tcp'], retained=True)):
+                issues.append('Legacy persistent/effective state changed before confirmation')
             if actual != tx["after"] or self.paths.config.read_text() != tx["config"] or issues or not ssh_listeners() <= set(policy.tcp):
                 raise NetworkError("State or prerequisites changed; cannot confirm; rollback remains armed")
             if time.monotonic() >= tx["deadline"]:
                 self._rollback(identifier)
                 raise NetworkError("Confirmation deadline expired; transaction rolled back")
             # Commit first. A queued timer subsequently sees no pending transaction and does nothing.
-            self.save_state({"version": 1, "committed": {"policy": tx["policy"], "effective": tx["after"]}, "pending": None})
+            committed = {"policy": tx["policy"], "effective": tx["after"]}
+            legacy = tx.get('migration') or (tx['before'] or {}).get('legacy')
+            if legacy:
+                committed['legacy'] = legacy
+            self.save_state({"version": 1, "committed": committed, "pending": None})
             self.cancel_timer(identifier)
             return {"changed": True, "committed": identifier}
 
@@ -525,8 +645,29 @@ class Controller:
 def dispatch(args) -> int:
     controller = Controller()
     try:
-        if args.network_command == "install":
-            result = controller.install()
+        if args.network_command == 'migration-plan':
+            rules = load_json(args.ruleset).get('nftables')
+            if not isinstance(rules, list):
+                raise NetworkError('Expected captured nft -j list ruleset JSON')
+            record = migration.recognize(rules, args.source.read_text())
+            own, conflicts = inspect_rules(rules)
+            conflicts = [c for c in conflicts if c != 'Foreign inbound base chain: inet filter input']
+            if own:
+                conflicts.append('Reserved managed table already exists; offline adoption refused')
+            policy = load_network_policy(args.profile, args.config)
+            if not set(policy.ssh_ports) <= set(record['tcp']):
+                conflicts.append('Declared SSH ports are not all present in the legacy allowance')
+            result = {'offline': True, 'conflicts': conflicts,
+                      'requires_live_preflight': ['SSH listeners and new connection', 'unit/boot ownership', 'provider console', 'affected applications and external IPv4/IPv6 reachability'],
+                      'legacy_before': migration.table_objects(rules), 'legacy_after': migration.objects(record['tcp'], retained=True),
+                      'ports': {proto: {'add': sorted(set(values)-set(record['tcp'] if proto == 'tcp' else [])), 'remove': sorted(set(record['tcp'] if proto == 'tcp' else [])-set(values))} for proto,values in (('tcp',policy.tcp),('udp',policy.udp))},
+                      'legacy_file_diff': list(difflib.unified_diff(record['source'].splitlines(), migration.source(record['tcp'], retained=True).splitlines(), fromfile='/etc/nftables.conf', tofile='retained forward/output')),
+                      'candidate_batch': migration.detach()+render_network(policy),
+                      'rollback_batch': rollback_text([])+migration.restore(record, migration.objects(record['tcp'], retained=True)),
+                      'policy_file': render_network(policy)}
+            result['digest'] = sha256(encode(result)).hexdigest()
+        elif args.network_command == "install":
+            result = controller.install(args.adopt_filter)
         elif args.network_command == "rollback":
             result = controller.rollback(getattr(args, "transaction", None))
         elif args.network_command == "confirm":
@@ -536,17 +677,29 @@ def dispatch(args) -> int:
             live, conflicts = controller.snapshot()
             state = controller.read_state()
             committed = state["committed"]
+            persisted = None
+            if committed:
+                trusted(controller.paths.config)
+                persisted = controller.paths.config.exists() and controller.paths.config.read_text() == render_network(declared_policy(committed["policy"]))
+                if 'legacy' in committed:
+                    legacy_path = Path('/etc/nftables.conf')
+                    trusted(legacy_path)
+                    persisted = persisted and legacy_file_matches(committed['legacy'], retained=True)
             result = {"journal": state, "effective": live,
                       "effective_matches_committed": live == committed["effective"] if committed else None,
+                      "persisted_matches_committed": persisted,
                       "conflicts": conflicts + controller.prerequisites()}
+            result["drift"] = bool(committed and not state["pending"] and (not result["effective_matches_committed"] or not persisted))
         else:
             policy = load_network_policy(args.profile, args.config)
-            if args.network_command == "plan" or args.dry_run:
-                result = controller.plan(policy)
+            if args.network_command in {"plan", "diff", "verify"} or args.dry_run:
+                result = controller.plan(policy, adopt_filter=args.adopt_filter)
             else:
-                result = controller.apply(policy, args.expect_plan, args.confirm_timeout, args.console)
+                result = controller.apply(policy, args.expect_plan, args.confirm_timeout, args.console, args.adopt_filter)
         print(json.dumps(result, indent=2))
-        return 1 if result.get("conflicts") else 0
+        if args.network_command == "verify":
+            return 2 if result.get("conflicts") or result.get("changed") else 0
+        return 1 if result.get("conflicts") else (2 if result.get("drift") else 0)
     except (NetworkError, OSError, ValueError, KeyError, TypeError) as exc:
         print(f"Network operation refused: {exc}", file=sys.stderr)
         return 1

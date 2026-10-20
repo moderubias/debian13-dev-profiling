@@ -2,12 +2,12 @@
 
 A Debian 13 (trixie) host security auditing, policy planning, and deterministic configuration generator. `d13dp` is the CLI name.
 
-**Status: v0.2.0a1, experimental and pre-production.** `audit`, `plan`, `render`, and `manifest` retain their read-only/candidate-generation behavior. The separate `network` command provides a narrowly scoped, explicitly installed host-input firewall transaction workflow with timed confirmation and rollback. It is **not a general production hardening executor**: it does not configure SSH, install application services, manage Docker DNAT, or apply the other rendered modules. Read the [network transaction guide](docs/network.md) before using it.
+**Status: v0.3.0a1, experimental and pre-production.** `audit`, `plan`, `render`, and `manifest` retain their read-only/candidate-generation behavior. The separate `network` command provides a narrowly scoped, explicitly installed host-input firewall transaction workflow with timed confirmation and rollback. It is **not a general production hardening executor**: it does not configure SSH, install application services, manage Docker DNAT, or apply the other rendered modules. Read the [network transaction guide](docs/network.md) before using it.
 
 ## What is implemented
 
-- Experimental `network install|plan|apply|confirm|rollback|status` with an owned nftables table, observed-state diffs, SSH preservation checks, durable transactions, a systemd rollback timer, and startup recovery.
-- `minimal`, `web`, host-input-only `docker`, and custom TCP/UDP network policies. Unsupported existing inbound chains are conflicts, not automatically adopted.
+- Experimental `network install|migration-plan|plan|diff|apply|verify|confirm|rollback|status` with an owned nftables table, observed-state diffs, SSH preservation checks, durable transactions, a systemd rollback timer, and startup recovery.
+- `minimal`, `web`, host-input-only `docker`, and custom TCP/UDP network policies. An explicit [recognized legacy migration](docs/firewall-migration.md) supports the documented `inet filter` template; unknown inbound layouts remain conflicts.
 
 - Read-only security audit (`audit`, `audit --json`, `audit --strict`).
 - Ordered implementation checklist (`plan`).
@@ -16,7 +16,7 @@ A Debian 13 (trixie) host security auditing, policy planning, and deterministic 
 - Three baseline profiles: `minimal`, `web`, and `docker`.
 - Refusal to overwrite differing generated files without `--replace`.
 - Tests for deterministic output, CLI behavior, invalid profiles, safe output paths, preservation of local edits, and avoiding `flush ruleset`.
-- Debian 13 container checks for packaging, OpenSSH, Fail2ban, APT configuration, and repeated nftables loading.
+- Debian 13 QEMU VM checks for real nftables/systemd/SSH, Fail2ban, process crashes, configuration parsing, and cold reboot; CI publishes machine-readable reports.
 
 ## Quick start
 
