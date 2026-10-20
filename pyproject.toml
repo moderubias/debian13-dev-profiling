@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "debian13-dev-profiling"
+version = "0.1.0"
+description = "Conservative Debian 13 host security audit and deterministic configuration planning"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.urls]
+Repository = "https://github.com/moderubias/debian13-dev-profiling"
+Issues = "https://github.com/moderubias/debian13-dev-profiling/issues"
+
+[project.scripts]
+d13dp = "d13dp.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+d13dp = ["profiles/*.toml"]

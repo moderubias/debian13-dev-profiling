@@ -1,0 +1,18 @@
+name = "docker"
+description = "Debian 13 Docker host; packet-filtering integration requires tailored policy"
+
+[ssh]
+port = 22
+root_login = "prohibit-password"
+login_grace_seconds = 45
+
+[firewall]
+mode = "external"
+inbound_tcp = [22, 80, 443]
+
+[modules]
+ssh = true
+nftables = false
+fail2ban = true
+unattended_upgrades = true
+sysctl = true

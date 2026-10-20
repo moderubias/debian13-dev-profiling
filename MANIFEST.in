@@ -1,0 +1,3 @@
+include SECURITY.md d13dp .dockerignore .gitignore
+recursive-include docs *.md
+recursive-include tests/integration *.py Dockerfile

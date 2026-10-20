@@ -1,0 +1,18 @@
+name = "web"
+description = "Debian 13 VPS serving HTTPS through a reverse proxy"
+
+[ssh]
+port = 22
+root_login = "prohibit-password"
+login_grace_seconds = 45
+
+[firewall]
+mode = "standalone"
+inbound_tcp = [22, 80, 443]
+
+[modules]
+ssh = true
+nftables = true
+fail2ban = true
+unattended_upgrades = true
+sysctl = true
